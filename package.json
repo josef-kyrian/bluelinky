@@ -11,7 +11,7 @@
     "dev": "rollup -w -c rollup.config.js",
     "lint": "eslint ./src --ext .js,.jsx,.ts,.tsx",
     "format": "prettier --write './src/**/*.{js,jsx,ts,tsx}'",
-    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
     "test": "jest --verbose",
     "debug": "ts-node -p debug.ts",
     "debug:modern": "tsx debug.ts",
