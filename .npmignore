@@ -5,6 +5,7 @@ config*.json
 src/
 .github/
 __tests__/
+changes/
 babel.config.js
 debug.ts
 jest.config.js

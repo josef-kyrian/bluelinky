@@ -1,4 +1,5 @@
-import { REGION } from '../constants';
+import type * as cciTypes from '../auth/cci/cci.types';
+import type * as constants from '../constants';
 
 export type Brand = 'kia' | 'hyundai';
 
@@ -6,7 +7,7 @@ export type Brand = 'kia' | 'hyundai';
 export interface BlueLinkyConfig {
   username: string | undefined;
   password: string | undefined;
-  region: REGION | undefined;
+  region: constants.REGION | undefined;
   brand: Brand;
   autoLogin?: boolean;
   pin: string | undefined;
@@ -27,6 +28,8 @@ export interface Session {
   deviceId?: string;
   tokenExpiresAt: number;
   controlTokenExpiresAt?: number;
+  /** Complete EU CCI state retained internally so refresh does not require another password login. */
+  cci?: cciTypes.CciTokenSet;
 }
 
 export enum EVPlugTypes {

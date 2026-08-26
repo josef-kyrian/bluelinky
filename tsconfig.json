@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "moduleResolution": "node",
+    "module": "ESNext",
     "target": "es6",
     "strict": true,
     "sourceMap": true,
@@ -13,7 +14,7 @@
     "emitDecoratorMetadata": true,
     "declarationDir": "dist-types",
     "outDir": "dist",
-    "lib": [ "es2015" ],
+    "lib": [ "es2017", "dom" ],
     "typeRoots": [
       "node_modules/@types"
     ]

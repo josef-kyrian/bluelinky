@@ -24,6 +24,7 @@
   "license": "MIT",
   "dependencies": {
     "got": "^9.6.0",
+    "impit": "^0.14.3",
     "push-receiver": "^2.1.1",
     "tough-cookie": "^4.0.0",
     "undici": "^6.10.2",

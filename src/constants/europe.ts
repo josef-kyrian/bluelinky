@@ -1,7 +1,7 @@
-import { REGIONS } from '../constants';
-import { EuropeBlueLinkyConfig } from '../controllers/european.controller';
-import { Brand } from '../interfaces/common.interfaces';
-import { StampMode, getStampGenerator } from './stamps';
+import * as sharedConstants from '../constants';
+import type * as europeanControllerTypes from '../controllers/european.controller';
+import type * as commonInterfaces from '../interfaces/common.interfaces';
+import * as stampConstants from './stamps';
 
 export type EULanguages =
   | 'cs'
@@ -37,11 +37,13 @@ export const EU_LANGUAGES: EULanguages[] = [
 export const DEFAULT_LANGUAGE: EULanguages = 'en';
 
 export interface EuropeanBrandEnvironment {
-  brand: Brand;
+  brand: commonInterfaces.Brand;
   host: string;
   baseUrl: string;
   clientId: string;
   appId: string;
+  /** Push provider used when the legacy ccapi registers a server-side device identifier. */
+  pushType: 'APNS' | 'GCM';
   endpoints: {
     integration: string;
     silentSignIn: string;
@@ -70,9 +72,12 @@ const getEndpoints = (
   silentSignIn: `${baseUrl}/api/v1/user/silentsignin`,
 });
 
-type EnvironmentConfig = Required<Pick<EuropeBlueLinkyConfig, 'stampMode'>> &
-  Partial<Pick<EuropeBlueLinkyConfig, 'stampsFile'>>;
-type BrandEnvironmentConfig = Pick<EuropeBlueLinkyConfig, 'brand'> & Partial<EnvironmentConfig>;
+type EnvironmentConfig = Required<
+  Pick<europeanControllerTypes.EuropeBlueLinkyConfig, 'stampMode'>
+> &
+  Partial<Pick<europeanControllerTypes.EuropeBlueLinkyConfig, 'stampsFile'>>;
+type BrandEnvironmentConfig = Pick<europeanControllerTypes.EuropeBlueLinkyConfig, 'brand'> &
+  Partial<EnvironmentConfig>;
 
 const getHyundaiEnvironment = ({
   stampMode,
@@ -81,22 +86,23 @@ const getHyundaiEnvironment = ({
   const host = 'prd.eu-ccapi.hyundai.com:8080';
   const baseUrl = `https://${host}`;
   const clientId = '6d477c38-3ca4-4cf3-9557-2a1929a94654';
-  const appId = '1eba27d2-9a5b-4eba-8ec7-97eb6c62fb51';
+  const appId = '014d2225-8495-4735-812d-2616334fd15d';
   return {
     brand: 'hyundai',
     host,
     baseUrl,
     clientId,
     appId,
+    pushType: 'GCM',
     endpoints: Object.freeze(getEndpoints(baseUrl, clientId)),
     basicToken:
       'Basic NmQ0NzdjMzgtM2NhNC00Y2YzLTk1NTctMmExOTI5YTk0NjU0OktVeTQ5WHhQekxwTHVvSzB4aEJDNzdXNlZYaG10UVI5aVFobUlGampvWTRJcHhzVg==',
     GCMSenderID: '414998006775',
-    stamp: getStampGenerator({
+    stamp: stampConstants.getStampGenerator({
       appId,
       brand: 'hyundai',
       mode: stampMode,
-      region: REGIONS.EU,
+      region: sharedConstants.REGIONS.EU,
       stampHost: 'https://raw.githubusercontent.com/neoPix/bluelinky-stamps/master/',
       stampsFile: stampsFile,
     }),
@@ -121,14 +127,15 @@ const getKiaEnvironment = ({
     baseUrl,
     clientId,
     appId,
+    pushType: 'APNS',
     endpoints: Object.freeze(getEndpoints(baseUrl, clientId)),
     basicToken: 'Basic ZmRjODVjMDAtMGEyZi00YzY0LWJjYjQtMmNmYjE1MDA3MzBhOnNlY3JldA==',
     GCMSenderID: '345127537656',
-    stamp: getStampGenerator({
+    stamp: stampConstants.getStampGenerator({
       appId,
       brand: 'kia',
       mode: stampMode,
-      region: REGIONS.EU,
+      region: sharedConstants.REGIONS.EU,
       stampHost: 'https://raw.githubusercontent.com/neoPix/bluelinky-stamps/master/',
       stampsFile: stampsFile,
     }),
@@ -141,7 +148,7 @@ const getKiaEnvironment = ({
 
 export const getBrandEnvironment = ({
   brand,
-  stampMode = StampMode.DISTANT,
+  stampMode = stampConstants.StampMode.DISTANT,
   stampsFile,
 }: BrandEnvironmentConfig): EuropeanBrandEnvironment => {
   switch (brand) {
