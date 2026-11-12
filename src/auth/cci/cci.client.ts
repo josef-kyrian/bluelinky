@@ -2,6 +2,7 @@ import * as nodeCrypto from 'crypto';
 import * as nodeUrl from 'url';
 
 import * as cciConfig from './cci.config';
+import * as cciSigning from './cci.signing';
 import * as cciTransport from './cci.transport';
 import type * as cciTypes from './cci.types';
 
@@ -11,7 +12,7 @@ const IDP_USER_AGENT =
   'AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.166 ' +
   'Mobile Safari/535.19_CCS_APP_AOS';
 
-/** Version and device profile sent by the production EU OneApp to CCI. */
+/** Legacy iOS profile retained for the unsigned CCI compatibility routes. */
 const CCI_CLIENT_VERSION = '1.3.3';
 const CCI_CLIENT_OS_CODE = 'ios';
 const CCI_CLIENT_DEVICE_MODEL = 'iPhone';
@@ -25,6 +26,34 @@ const MAX_AUTHORIZATION_REDIRECTS = 6;
 /** Safe fallback when an API response omits a token lifetime. */
 const DEFAULT_TOKEN_LIFETIME_SECONDS = 3600;
 
+/** Signed primary routes and the corresponding pre-fingerprint compatibility routes. */
+const CCI_TOKEN_ROUTES = {
+  'CCI token processing': {
+    /** Current Android authorization-code exchange. */
+    signedPath: '/auth/v1/token',
+    /** Original unsigned authorization-code exchange. */
+    legacyPath: '/domain/api/v1/auth/token',
+  },
+  'CCS token exchange': {
+    /** Current Android exchange for the vehicle-service access token. */
+    signedPath: '/auth/v1/token-exchange',
+    /** Original unsigned service-token exchange. */
+    legacyPath: '/domain/api/v1/auth/token-exchange',
+  },
+  'CCI token refresh': {
+    /** Current Android rotation of the complete CCI token collection. */
+    signedPath: '/auth/v2/token-refresh',
+    /** Original unsigned token rotation. */
+    legacyPath: '/domain/api/v2/auth/token-refresh',
+  },
+};
+
+/** Token-operation stages whose request routing and fallback are owned by the CCI client. */
+type CciTokenStage = keyof typeof CCI_TOKEN_ROUTES;
+
+/** Only these documented fingerprint failures permit a single unsigned compatibility request. */
+const FINGERPRINT_REJECTION_CODES: ReadonlySet<number> = new Set([9035, 9036, 9037]);
+
 /**
  * Authentication stages exposed in errors so callers can distinguish protocol failures.
  */
@@ -32,9 +61,7 @@ export type CciAuthenticationStage =
   | 'OneApp authorization'
   | 'certificate retrieval'
   | 'CCI sign-in'
-  | 'CCI token processing'
-  | 'CCS token exchange'
-  | 'CCI token refresh';
+  | CciTokenStage;
 
 /**
  * Stage-aware authentication error that never intentionally includes credentials or complete tokens.
@@ -92,6 +119,20 @@ interface CciHeaderTokens {
   nonCcsToken: string;
   /** Token that the service exchange converts into a CCS token. */
   exchangeableAccessToken: string;
+}
+
+/**
+ * Inputs shared by signed and unsigned forms of one logical CCI token operation.
+ */
+interface CciTokenRequest {
+  /** Registered device identity retained across login, exchange, and refresh. */
+  deviceId: string;
+  /** Existing tokens needed for CCS exchange and legacy refresh headers. */
+  tokens?: CciHeaderTokens;
+  /** Serialized refresh body, signed and transmitted without reserialization. */
+  body?: string;
+  /** Operation-specific query parameters, deliberately excluded from the fingerprint. */
+  query?: Record<string, string>;
 }
 
 /**
@@ -180,6 +221,34 @@ function getOptionalString(record: Record<string, unknown>, field: string): stri
 function getPositiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+/**
+ * Reads a numeric error code without forwarding any remote strings into diagnostics.
+ */
+function getResponseErrorCode(body: string): number | undefined {
+  try {
+    const record = getJsonRecord(JSON.parse(body), 'error response');
+    if (typeof record.code === 'number' && Number.isSafeInteger(record.code)) {
+      return record.code;
+    }
+  } catch {
+    // Error pages and malformed responses are intentionally never echoed.
+  }
+
+  return undefined;
+}
+
+/**
+ * Recognizes only HTTP 4xx fingerprint-gate failures, not business, network, or server errors.
+ */
+function isFingerprintRejection(response: cciTypes.CciHttpResponse): boolean {
+  if (response.statusCode < 400 || response.statusCode >= 500) {
+    return false;
+  }
+
+  const code = getResponseErrorCode(response.body);
+  return code !== undefined && FINGERPRINT_REJECTION_CODES.has(code);
 }
 
 /**
@@ -320,21 +389,19 @@ export class CciClient {
     currentTokenSet: cciTypes.CciTokenSet
   ): Promise<cciTypes.CciAuthenticationResult> {
     const transport = this.transportFactory();
-    const response = await this.request(
+    const body = JSON.stringify({
+      accessToken: currentTokenSet.accessToken.replace(/^Bearer\s+/i, ''),
+      refreshToken: currentTokenSet.refreshToken,
+      exchangeableAccessToken: currentTokenSet.exchangeableAccessToken,
+      exchangeableRefreshToken: currentTokenSet.exchangeableRefreshToken,
+      nonCcsToken: currentTokenSet.nonCcsToken,
+      nonCcsRefreshToken: currentTokenSet.nonCcsRefreshToken,
+      idToken: currentTokenSet.idToken,
+    });
+    const response = await this.requestCciTokens(
       transport,
       'CCI token refresh',
-      `${this.config.cciBaseUrl}/domain/api/v2/auth/token-refresh`,
-      'POST',
-      this.createCciHeaders(currentTokenSet.deviceId, currentTokenSet, true),
-      JSON.stringify({
-        accessToken: currentTokenSet.accessToken.replace(/^Bearer\s+/i, ''),
-        refreshToken: currentTokenSet.refreshToken,
-        exchangeableAccessToken: currentTokenSet.exchangeableAccessToken,
-        exchangeableRefreshToken: currentTokenSet.exchangeableRefreshToken,
-        nonCcsToken: currentTokenSet.nonCcsToken,
-        nonCcsRefreshToken: currentTokenSet.nonCcsRefreshToken,
-        idToken: currentTokenSet.idToken,
-      })
+      { deviceId: currentTokenSet.deviceId, tokens: currentTokenSet, body }
     );
 
     if (response.statusCode !== 200) {
@@ -583,14 +650,10 @@ export class CciClient {
     authorizationCode: string,
     deviceId: string
   ): Promise<cciTypes.CciTokenSet> {
-    const url = new nodeUrl.URL('/domain/api/v1/auth/token', this.config.cciBaseUrl);
-    url.searchParams.set('code', authorizationCode);
-    const response = await this.request(
+    const response = await this.requestCciTokens(
       transport,
       'CCI token processing',
-      url.toString(),
-      'POST',
-      this.createCciHeaders(deviceId)
+      { deviceId, query: { code: authorizationCode } }
     );
 
     if (response.statusCode !== 200) {
@@ -619,14 +682,10 @@ export class CciClient {
     transport: cciTypes.CciHttpTransport,
     tokenSet: cciTypes.CciTokenSet
   ): Promise<CcsTokenExchangeResult> {
-    const url = new nodeUrl.URL('/domain/api/v1/auth/token-exchange', this.config.cciBaseUrl);
-    url.searchParams.set('serviceType', 'CCS');
-    const response = await this.request(
+    const response = await this.requestCciTokens(
       transport,
       'CCS token exchange',
-      url.toString(),
-      'POST',
-      this.createCciHeaders(tokenSet.deviceId, tokenSet)
+      { deviceId: tokenSet.deviceId, tokens: tokenSet, query: { serviceType: 'CCS' } }
     );
 
     if (response.statusCode !== 200) {
@@ -694,7 +753,8 @@ export class CciClient {
   }
 
   /**
-   * Builds the exact CCI mobile headers for token creation, refresh, and exchange.
+   * Builds shared CCI metadata and token headers with the legacy profile as the unsigned default.
+   * Signed requests replace only the app identity and profile through the signing module.
    */
   private createCciHeaders(
     deviceId: string,
@@ -728,6 +788,59 @@ export class CciClient {
     }
 
     return headers;
+  }
+
+  /**
+   * Sends each token operation signed first, retaining one narrowly gated compatibility fallback.
+   * Refresh tokens travel in the signed JSON body, while CCS exchange also needs token headers.
+   */
+  private async requestCciTokens(
+    transport: cciTypes.CciHttpTransport,
+    stage: CciTokenStage,
+    input: CciTokenRequest
+  ): Promise<cciTypes.CciHttpResponse> {
+    const route = CCI_TOKEN_ROUTES[stage];
+    const url = new nodeUrl.URL(route.signedPath, this.config.cciBaseUrl);
+    for (const [name, value] of Object.entries(input.query ?? {})) {
+      url.searchParams.set(name, value);
+    }
+
+    const body = input.body ?? '';
+    const tokens = stage === 'CCS token exchange' ? input.tokens : undefined;
+    let headers: Record<string, string>;
+    try {
+      headers = {
+        ...this.createCciHeaders(input.deviceId, tokens, input.body !== undefined),
+        ...cciSigning.createSignedHeaders(
+          this.config.packageId,
+          this.config.signing,
+          input.deviceId,
+          this.now(),
+          body
+        ),
+      };
+    } catch {
+      throw new CciAuthenticationError(stage, 'request signing failed');
+    }
+
+    const signedResponse = await this.request(transport, stage, url.toString(), 'POST', headers, body);
+    if (!isFingerprintRejection(signedResponse)) {
+      return signedResponse;
+    }
+
+    const legacyUrl = new nodeUrl.URL(route.legacyPath, this.config.cciBaseUrl);
+    legacyUrl.search = url.search;
+    const legacyResponse = await this.request(
+      transport,
+      stage,
+      legacyUrl.toString(),
+      'POST',
+      this.createCciHeaders(input.deviceId, input.tokens, input.body !== undefined),
+      body
+    );
+
+    // Keep the original signature failure (especially clock skew) if neither route accepts it.
+    return isFingerprintRejection(legacyResponse) ? signedResponse : legacyResponse;
   }
 
   /**

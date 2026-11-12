@@ -4,6 +4,7 @@ import type * as cciTypes from './cci.types';
  * Creates one immutable brand configuration while keeping shared OneApp metadata centralized.
  */
 function createBrandConfig(config: cciTypes.CciBrandConfig): Readonly<cciTypes.CciBrandConfig> {
+  Object.freeze(config.signing);
   return Object.freeze(config);
 }
 
@@ -22,6 +23,12 @@ const CCI_BRAND_CONFIGS: Readonly<Record<cciTypes.CciBrand, Readonly<cciTypes.Cc
       clientName: 'hyundai',
       clientOsVersion: '18.7',
       notificationProvider: 'APNS',
+      signing: {
+        clientName: 'HyundaiEU',
+        brandLabel: 'Hyundai',
+        // Android OneApp 1.4.0 constants verified against the MIT references in THIRD_PARTY_NOTICES.
+        keySuffix: 'OsZDfDuCyVX' + 'yfqjCoA2JbX' + '2MrLpGwNBC',
+      },
     }),
     kia: createBrandConfig({
       brand: 'kia',
@@ -33,6 +40,12 @@ const CCI_BRAND_CONFIGS: Readonly<Record<cciTypes.CciBrand, Readonly<cciTypes.Cc
       clientName: 'kia',
       clientOsVersion: '27',
       notificationProvider: 'IOS_APPSTORE',
+      signing: {
+        clientName: 'KiaEU',
+        brandLabel: 'Kia',
+        // Android OneApp 1.4.0 constants verified against the MIT references in THIRD_PARTY_NOTICES.
+        keySuffix: 'yb4Z1n2nlKe' + 'ukNilE7QEdb' + 'KB34nStPVa',
+      },
     }),
   });
 

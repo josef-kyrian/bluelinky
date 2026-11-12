@@ -4,6 +4,18 @@
 export type CciBrand = 'hyundai' | 'kia';
 
 /**
+ * Brand-specific Android identity and key suffix used only by CCI request signing.
+ */
+export interface CciSigningConfig {
+  /** Android OneApp name validated together with the package identifier. */
+  readonly clientName: string;
+  /** Display-case brand label required by the X-Brand header. */
+  readonly brandLabel: string;
+  /** App-embedded HMAC key suffix; never include it in diagnostics. */
+  readonly keySuffix: string;
+}
+
+/**
  * Brand-specific constants required by the current OneApp and CCI wire protocols.
  */
 export interface CciBrandConfig {
@@ -25,6 +37,8 @@ export interface CciBrandConfig {
   clientOsVersion: string;
   /** Push-provider identifier expected by the brand-specific CCI profile. */
   notificationProvider: string;
+  /** Verified Android signing identity, separate from the legacy iOS fallback profile. */
+  signing: Readonly<CciSigningConfig>;
 }
 
 /**
